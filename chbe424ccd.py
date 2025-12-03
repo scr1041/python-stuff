@@ -442,7 +442,6 @@ def run_CSTR_series(T, N_stages, V_total):
     return eps_array, F_final
 
 def scan_theta_NH3(T, V_total):
-    global theta_NH3
 
     theta_vals = np.linspace(2.3, 4.0, 15)  # 15 points between 2.3 and 4
     best_theta = None
@@ -532,7 +531,7 @@ if __name__ == "__main__":
         print("\nNo feasible theta_NH3 found in [2.3,4].")
 
 
-    for N in [1, 2, 3, 30]:
+    for N in [1, 2, 3, 5]:
         try:
             eps_array, F_final = run_CSTR_series(T_test, N, V_total)
         except RuntimeError as e:
