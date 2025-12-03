@@ -65,9 +65,7 @@ K1_values = K_of_T(T_values, C1_1, C2_1, C3_1, C4_1)
 K2_values = K_of_T(T_values, C1_2, C2_2, C3_2, C4_2)
 K3_values = K_of_T(T_values, C1_3, C2_3, C3_3, C4_3)
 
-
-
-# list
+# species list
 species = [
     "H2O",       # 0
     "NH3",       # 1
@@ -79,6 +77,31 @@ species = [
 ]
 ns = len(species)
 idx = {s: i for i, s in enumerate(species)}
+
+# stoichiometrix matrix
+nu = np.zeros((ns, 3))
+
+# H2O: theta_H2O - eps2 + eps3
+nu[idx["H2O"], :] = [0.0, -1.0, +1.0]
+
+# NH3: theta_NH3 - 2 eps1 - eps2
+nu[idx["NH3"], :] = [-2.0, -1.0, 0.0]
+
+# CO2: theta_CO2 - eps1 - eps2
+nu[idx["CO2"], :] = [-1.0, -1.0, 0.0]
+
+# urea: theta_urea + eps3
+nu[idx["urea"], :] = [0.0, 0.0, +1.0]
+
+# carbamate: + eps1 - eps3
+nu[idx["carbamate"], :] = [+1.0, 0.0, -1.0]
+
+# bicarb: + eps2
+nu[idx["bicarb"], :] = [0.0, +1.0, 0.0]
+
+# NH4+: + eps1 + eps2 - eps3
+nu[idx["NH4plus"], :] = [+1.0, +1.0, -1.0]
+
 
 r = np.array([
     0.92,  # H2O
@@ -110,7 +133,6 @@ z = np.array([
     -1,  # bicarb (HCO3-)
     +1,  # NH4+
 ])
-
 
 Z_UNI = 10.0  # UNIQUAC coordination number
 
@@ -317,39 +339,40 @@ v0 = 1.0 # given
 V = 1.0e4 # also given
 F_CO2_0 = 1
 
+def F_in_from_theta():
+    F_in = np.zeros(ns)
+    F_in[idx["H2O"]] = theta_H2O
+    F_in[idx["NH3"]] = theta_NH3
+    F_in[idx["CO2"]] = theta_CO2
+    F_in[idx["urea"]] = theta_urea
+    # ions start at 0
+    return F_in
+
 # f_i = F_i/F_CO2
-def f_eps(eps):
-    eps1, eps2, eps3 = eps
-    f = np.zeros(ns)
-    f[idx["H2O"]] = theta_H2O - eps2 + eps3
-    f[idx["NH3"]] = theta_NH3 - 2 * eps1 - eps2
-    f[idx["CO2"]] = theta_CO2 - eps1 - eps2
-    f[idx["urea"]] = theta_urea + eps3
-    f[idx["carbamate"]] = eps1 - eps3
-    f[idx["bicarb"]] = eps2
-    f[idx["NH4plus"]] = eps1 + eps2 - eps3
+def f_eps_stage(eps, F_in):
+    """
+    Given inlet molar flows F_in (per 1 mol/s CO2, or any basis),
+    and extents eps = [eps1, eps2, eps3] in this stage,
+    return outlet flows F_out.
+    """
+    return F_in + nu @ eps
 
-    return f
-
-def rxn_quotients(T, eps):
-
-    f = f_eps(eps)
-
+def rxn_quotients(T, F_out):
     # if any flow is <= 0
-    if np.any(f <= 0.0):
+    if np.any(F_out <= 0.0):
         return None
-    
-    x = f / f.sum()
+
+    x = F_out / F_out.sum()
     gamma = activity_coefficients(T, x)
     a = gamma * x
 
-    a_H2O    = a[idx["H2O"]]
-    a_NH3    = a[idx["NH3"]]
-    a_CO2    = a[idx["CO2"]]
-    a_urea   = a[idx["urea"]]
-    a_carb   = a[idx["carbamate"]]
+    a_H2O = a[idx["H2O"]]
+    a_NH3 = a[idx["NH3"]]
+    a_CO2 = a[idx["CO2"]]
+    a_urea = a[idx["urea"]]
+    a_carb = a[idx["carbamate"]]
     a_bicarb = a[idx["bicarb"]]
-    a_NH4    = a[idx["NH4plus"]]
+    a_NH4 = a[idx["NH4plus"]]
 
     Q1 = (a_carb * a_NH4) / (a_CO2 * a_NH3**2)
     Q2 = (a_bicarb * a_NH4) / (a_CO2 * a_NH3 * a_H2O)
@@ -363,17 +386,17 @@ def find_k3(T):
     return A * np.exp(-Ea / (R * T))
 
 # residuals for the optimization
-# TODO: do this later lmao
-def residuals_eps(eps, T):
-    # solving triple system of equations
-    # 1. ln(Q1) - ln(K1) = 0
-    # 2. ln(Q2) - ln(K2) = 0
-    # 3. eps3 - r_urea*V/F_CO2_0 = 0
+def residuals_eps_stage(eps, T, F_in, V_stage):
+    """
+    Residuals for a single CSTR of volume V_stage
+    with inlet flows F_in and outlet defined via eps.
+    """
+    F_out = f_eps_stage(eps, F_in)
 
-    out = rxn_quotients(T, eps)
+    out = rxn_quotients(T, F_out)
     if out is None:
         return np.array([1e6, 1e6, 1e6])
-    
+
     Q1, Q2, a_carb, a_NH4, a_urea, a_H2O = out
 
     eps_small = 1e-16
@@ -386,25 +409,39 @@ def residuals_eps(eps, T):
     k3 = find_k3(T)
     r_urea = k3 * a_carb * a_NH4
 
-    # CSTR design equation
-    res3 = eps[2] - r_urea * V
+    # CSTR design equation for urea in the current stage
+    res3 = eps[2] - r_urea * V_stage
 
     return np.array([res1, res2, res3])
 
-def solve_eps_CSTR(T):
+def solve_one_CSTR(T, F_in, V_stage):
+    # small positive initial guess for eps
+    eps0 = np.array([0.1, 0.05, 0.01])
 
-    # initial guess for extents. tweak if needed
-    eps0 = np.array([0.3, 0.1, 0.05])
-
-    sol = root(residuals_eps, eps0, args=(T,))
+    sol = root(residuals_eps_stage, eps0, args=(T, F_in, V_stage))
 
     if not sol.success:
-        raise RuntimeError(f"eps solve failed at T={T}: {sol.message}")
+        raise RuntimeError(f"CSTR solve failed: {sol.message}")
 
-    eps_eq = sol.x
-    return eps_eq
+    eps = sol.x
+    F_out = f_eps_stage(eps, F_in)
+    return eps, F_out
 
-def scan_theta_NH3(T):
+def run_CSTR_series(T, N_stages, V_total):
+    V_stage = V_total / N_stages
+    F_in = F_in_from_theta()
+
+    eps_list = []
+    for k in range(N_stages):
+        eps_k, F_out = solve_one_CSTR(T, F_in, V_stage)
+        eps_list.append(eps_k)
+        F_in = F_out  # outlet of this stage is inlet to the next
+
+    eps_array = np.vstack(eps_list)
+    F_final = F_in
+    return eps_array, F_final
+
+def scan_theta_NH3(T, V_total):
     global theta_NH3
 
     theta_vals = np.linspace(2.3, 4.0, 15)  # 15 points between 2.3 and 4
@@ -413,9 +450,12 @@ def scan_theta_NH3(T):
     best_eps = None
 
     for th in theta_vals:
-        theta_NH3 = th  # update global
+        theta_NH3 = th  # update global NH3 ratio
+
+        F_in = F_in_from_theta()  # inlet flows for this theta
+
         try:
-            eps_eq = solve_eps_CSTR(T)
+            eps_eq, F_out = solve_one_CSTR(T, F_in, V_total)
         except RuntimeError:
             continue  # skip infeasible cases
 
@@ -423,7 +463,7 @@ def scan_theta_NH3(T):
         if eps2 <= 0:
             continue
 
-        metric = eps3 / eps2   # e.g. "selectivity" proxy
+        metric = eps3 / eps2   # selectivity proxy
 
         if metric > best_metric:
             best_metric = metric
@@ -443,6 +483,8 @@ if __name__ == "__main__":
     # adjust T as needed. Should be between 443 and 473 K
     T_test = 463.0 
 
+    V_total = V
+
     # feed composition is from guidelines
     # x_H2O = 0.2700, x_NH3 = 0.5338, x_CO2 = 0.0631, x_urea = 0.1331, others 0
     x_feed = np.zeros(ns)
@@ -461,26 +503,47 @@ if __name__ == "__main__":
         print(f"  {s:9s}: gamma = {g: .6f}")
 
     # solve for eps1, eps2, eps3 at T_test
+    # --- Single CSTR with total volume V_total ---
     try:
-        eps_eq = solve_eps_CSTR(T_test)
-        print(f"\nCSTR extents at T = {T_test} K:")
+        F_in0 = F_in_from_theta()
+        eps_eq, f_out = solve_one_CSTR(T_test, F_in0, V_total)
+
+        print(f"\nSingle CSTR (V = {V_total:.2e} L) at T = {T_test} K:")
         print(f"  eps1 (carbamate)   = {eps_eq[0]: .5e}")
         print(f"  eps2 (bicarb)      = {eps_eq[1]: .5e}")
         print(f"  eps3 (urea)        = {eps_eq[2]: .5e}")
 
-        f_out = f_eps(eps_eq)
         f_tot = f_out.sum()
         print("\nOutlet composition (per 1 mol/s CO2 feed):")
         for s in species:
             fi = f_out[idx[s]]
             print(f"  {s:9s}: f = {fi: .5e}, x = {fi/f_tot: .5f}")
     except RuntimeError as e:
-        print("\nCSTR solve failed:", e)
+        print("\nSingle CSTR solve failed:", e)
 
-    best_theta, best_eps, best_metric = scan_theta_NH3(T_test)
+
+    best_theta, best_eps, best_metric = scan_theta_NH3(T_test, V_total)
+
     if best_theta is not None:
         print(f"\nBest theta_NH3 in [2.3,4] at T={T_test} K:")
         print(f"  theta_NH3* = {best_theta:.3f}, metric (eps3/eps2) = {best_metric:.3f}")
         print(f"  eps* = {best_eps}")
     else:
         print("\nNo feasible theta_NH3 found in [2.3,4].")
+
+
+    for N in [1, 2, 3, 30]:
+        try:
+            eps_array, F_final = run_CSTR_series(T_test, N, V_total)
+        except RuntimeError as e:
+            print(f"\nN = {N}: solve failed – {e}")
+            continue
+
+        eps_total = eps_array.sum(axis=0)  # total extents over all stages
+        x_final = F_final / F_final.sum()
+
+        print(f"\n=== {N} CSTR(s) in series at T = {T_test} K ===")
+        print(f"Total eps1 (carbamate) = {eps_total[0]:.4e}")
+        print(f"Total eps2 (bicarb)    = {eps_total[1]:.4e}")
+        print(f"Total eps3 (urea)      = {eps_total[2]:.4e}")
+        print(f"x_urea at outlet       = {x_final[idx['urea']]:.5f}")
