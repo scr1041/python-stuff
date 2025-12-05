@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.optimize import root
 
-# === Equilibrium constants vs T ============================================
+# finding equilibrium constants at some T
 
 # Rxn 1 (Rxn 7 in the paper)
 raw_C1_7 = 9.9068   # 10^-3 C1,i
@@ -47,7 +47,7 @@ def K2(T):
 def K3(T):
     return K_of_T(T, C1_3, C2_3, C3_3, C4_3)
 
-# === Species & stoichiometry ==============================================
+# species and stoichiometry
 
 species = [
     "H2O",       # 0
@@ -105,8 +105,7 @@ z_charges = np.array([
 Z_UNI = 10.0
 b_DH  = 1.5
 
-# === Debye–Hückel contribution ============================================
-
+# long-range Debye–Hückel contribution 
 def A_phi_DH(T: float) -> float:
     return 0.509 * np.log(10.0)
 
@@ -132,7 +131,7 @@ def ln_gamma_long(T: float, x: np.ndarray) -> np.ndarray:
                 ln_gamma_DH[i] = -A_phi * z_charges[i]**2 * sqrtI / (1.0 + b_DH * sqrtI)
     return ln_gamma_DH
 
-# === UNIQUAC short-range contribution =====================================
+# uniquac short-range contribution (combinatorial + residual terms)
 
 def tau_matrix(T: float) -> np.ndarray:
     a = np.zeros((ns, ns))
@@ -289,14 +288,14 @@ def activity_coefficients_unsymmetric(T: float, x: np.ndarray) -> np.ndarray:
     ln_dh = ln_gamma_long(T, x)
     return np.exp(ln_unsym_short + ln_dh)
 
-# === Reactor setup =========================================================
+# reactor setup
 
 theta_CO2 = 1.0
-theta_NH3 = 3.0
+theta_NH3 = 4.0
 theta_H2O = 0.1
 theta_urea = 0.0
 
-v0 = 1.0
+v0 = 1000.0
 V  = 1.0e4  # total reactor volume (arbitrary units)
 
 def F_in_from_theta(theta_NH3_value=None):
@@ -416,7 +415,7 @@ def scan_theta_NH3(T, V_total):
 
     return best_theta, best_eps, best_metric
 
-# === Main block ============================================================
+# actually running stuff (the main block)
 
 if __name__ == "__main__":
     # K1–K3 table
@@ -465,6 +464,10 @@ if __name__ == "__main__":
         print(f"  eps2 (bicarb)      = {eps_eq[1]: .5e}")
         print(f"  eps3 (urea)        = {eps_eq[2]: .5e}")
 
+        # overall reaction selectivity
+        S_urea_bicarb = eps_eq[2] / eps_eq[1]
+        print(f"  Selectivity S_urea/bicarb = eps3/eps2 = {S_urea_bicarb:.3f}")
+
         f_tot = f_out.sum()
         print("\nOutlet composition for basis F_CO2,in = 1 mol/s:")
         for s in species:
@@ -497,7 +500,7 @@ if __name__ == "__main__":
         print("\nSingle CSTR solve failed:", e)
 
     # Optional: CSTRs in series
-    for N in [1, 2, 3, 5]:
+    for N in [1, 2, 3]:
         try:
             eps_array, F_final = run_CSTR_series(T_test, N, V_total)
         except RuntimeError as e:
@@ -507,8 +510,12 @@ if __name__ == "__main__":
         eps_total = eps_array.sum(axis=0)
         x_final = F_final / F_final.sum()
 
+        S_total = eps_total[2] / eps_total[1]
+
+
         print(f"\n=== {N} CSTR(s) in series at T = {T_test} K ===")
         print(f"Total eps1 (carbamate) = {eps_total[0]:.4e}")
         print(f"Total eps2 (bicarb)    = {eps_total[1]:.4e}")
         print(f"Total eps3 (urea)      = {eps_total[2]:.4e}")
         print(f"x_urea at outlet       = {x_final[idx['urea']]:.5f}")
+        print(f"Overall S_urea/bicarb  = {S_total:.3f}")
