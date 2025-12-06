@@ -146,12 +146,12 @@ def tau_matrix(T: float) -> np.ndarray:
     a[i, k] = (-1272.667 + 183114.45 / T)
     a[k, i] = (2282.919 - 334031.43 / T)
 
-    # 3) NH4+ – H2O
+    # 3) NH4+ - H2O
     i = idx["NH4plus"]; k = idx["H2O"]
     a[i, k] = -797.8
     a[k, i] = 646.5
 
-    # 4) HCO3- – H2O
+    # 4) HCO3- - H2O
     i = idx["bicarb"]; k = idx["H2O"]
     a[i, k] = -772.5
     a[k, i] = -474.4
@@ -296,7 +296,31 @@ theta_H2O = 0.1
 theta_urea = 0.0
 
 v0 = 1000.0
-V  = 1.00e5  # total reactor volume (arbitrary units)
+V  = 1.00e4  # total reactor volume (L)
+R = 8.314  # J/mol/K
+
+def delta_H_from_C(T, C1, C2, C3):
+    """
+    ΔH_r,j(T) from ln K correlation
+
+        ln K_j(T) = C1/T + C2*ln(T) + C3*T + C4
+
+    via van’t Hoff: d(ln K)/dT = ΔH_r,j / (R T^2)
+    => ΔH_r,j(T) = R*(-C1 + C2*T + C3*T^2)
+    """
+    return R * (-C1 + C2*T + C3*T**2)  # J/mol
+
+def delta_H1(T):
+    return delta_H_from_C(T, C1_1, C2_1, C3_1)  # Rxn 1 (carbamate)
+
+def delta_H2(T):
+    return delta_H_from_C(T, C1_2, C2_2, C3_2)  # Rxn 2 (bicarb)
+
+def delta_H3(T):
+    return delta_H_from_C(T, C1_3, C2_3, C3_3)  # Rxn 3 (urea)
+
+def reaction_enthalpies(T):
+    return np.array([delta_H1(T), delta_H2(T), delta_H3(T)])
 
 def F_in_from_theta(theta_NH3_value=None):
     """
@@ -415,6 +439,8 @@ def scan_theta_NH3(T, V_total):
 
     return best_theta, best_eps, best_metric
 
+
+
 # actually running stuff (the main block)
 
 if __name__ == "__main__":
@@ -532,3 +558,19 @@ if __name__ == "__main__":
         print(f"  Selectivity metric   = eps3/eps2 = {best_metric:.3f}")
     else:
         print("\nScan over theta_NH3: no feasible solution found in [2.3, 4.0].")
+
+
+    dH_vec = reaction_enthalpies(T_test)   # J/mol for each reaction
+    Qdot_Jps = np.dot(eps_eq, dH_vec)      # J/s = W (positive = heat released)
+    Qdot_kW = Qdot_Jps / 1000.0
+    Q_MJ_per_day = Qdot_Jps * 86400.0 / 1.0e6
+
+    print("\nReaction enthalpies at T = {:.1f} K:".format(T_test))
+    print("  ΔH1 (carbamate) = {: .3e} J/mol".format(dH_vec[0]))
+    print("  ΔH2 (bicarb)    = {: .3e} J/mol".format(dH_vec[1]))
+    print("  ΔH3 (urea)      = {: .3e} J/mol".format(dH_vec[2]))
+
+    print("\nTotal heat from reactions in CSTR (basis F_CO2,in = 1 mol/s):")
+    print("Q̇ = eps·ΔH_r = {: .3e} W".format(Qdot_Jps))
+    print("  = {: .3f} kW".format(Qdot_kW))
+    print("  = {: .3f} MJ/day".format(Q_MJ_per_day))
