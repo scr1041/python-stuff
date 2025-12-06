@@ -296,7 +296,7 @@ theta_H2O = 0.1
 theta_urea = 0.0
 
 v0 = 1000.0
-V  = 1.0e4  # total reactor volume (arbitrary units)
+V  = 1.00e5  # total reactor volume (arbitrary units)
 
 def F_in_from_theta(theta_NH3_value=None):
     """
@@ -488,7 +488,7 @@ if __name__ == "__main__":
 
         print(f"\nTo produce {target_kg_day:.0f} kg/day of urea (same T, V, and ratios):")
         print(f"  Required CO2 feed  F_CO2,in ≈ {F_CO2_needed:.3f} mol/s")
-        print(f"                      (≈ {F_CO2_needed*3600/1000:.3f} kmol/h)")
+        print(f"                      (≈ {F_CO2_needed * 3600/1000:.3f} kmol/h)")
 
         F_NH3_needed = theta_NH3 * F_CO2_needed / theta_CO2
         F_H2O_needed = theta_H2O * F_CO2_needed / theta_CO2
@@ -500,7 +500,7 @@ if __name__ == "__main__":
         print("\nSingle CSTR solve failed:", e)
 
     # Optional: CSTRs in series
-    for N in [1, 2, 3]:
+    for N in [1, 2, 3, 50]:
         try:
             eps_array, F_final = run_CSTR_series(T_test, N, V_total)
         except RuntimeError as e:
@@ -512,10 +512,23 @@ if __name__ == "__main__":
 
         S_total = eps_total[2] / eps_total[1]
 
-
         print(f"\n=== {N} CSTR(s) in series at T = {T_test} K ===")
         print(f"Total eps1 (carbamate) = {eps_total[0]:.4e}")
         print(f"Total eps2 (bicarb)    = {eps_total[1]:.4e}")
         print(f"Total eps3 (urea)      = {eps_total[2]:.4e}")
         print(f"x_urea at outlet       = {x_final[idx['urea']]:.5f}")
         print(f"Overall S_urea/bicarb  = {S_total:.3f}")
+    
+        # Scan theta_NH3 to maximize selectivity eps3/eps2
+    best_theta, best_eps, best_metric = scan_theta_NH3(T_test, V_total)
+
+    if best_theta is not None:
+        eps1_b, eps2_b, eps3_b = best_eps
+        print(f"\nScan over theta_NH3 in [2.3, 4.0] at T = {T_test} K, V = {V_total:.2e} L:")
+        print(f"  Best theta_NH3       = {best_theta:.3f}")
+        print(f"  eps1 (carbamate)     = {eps1_b: .5e}")
+        print(f"  eps2 (bicarb)        = {eps2_b: .5e}")
+        print(f"  eps3 (urea)          = {eps3_b: .5e}")
+        print(f"  Selectivity metric   = eps3/eps2 = {best_metric:.3f}")
+    else:
+        print("\nScan over theta_NH3: no feasible solution found in [2.3, 4.0].")
